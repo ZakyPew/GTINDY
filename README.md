@@ -1,6 +1,6 @@
 # AxisCare → IRIS Provider Invoice Converter
 
-Flask web app. Upload an AxisCare `ClaimBatchCreation` CSV; download a ZIP of
+Streamlit app. Upload an AxisCare `ClaimBatchCreation` CSV; download a ZIP of
 filled IRIS Provider Invoice PDFs.
 
 ## Behavior
@@ -17,8 +17,16 @@ filled IRIS Provider Invoice PDFs.
 ## Run locally
 
     pip install -r requirements.txt
-    python app.py
-    # http://127.0.0.1:5000
+    streamlit run app.py
+    # http://localhost:8501
+
+To require a password, set `APP_PASSWORD`:
+
+    APP_PASSWORD='strong-secret' streamlit run app.py
+
+You can also put it in `.streamlit/secrets.toml`:
+
+    APP_PASSWORD = "strong-secret"
 
 ## HIPAA compliance
 
@@ -27,23 +35,31 @@ service). The code is structured to support a HIPAA-compliant deployment;
 **compliance also requires operational controls that are not enforceable from
 the code alone**.
 
+### ⚠️ Streamlit Community Cloud is NOT HIPAA-eligible
+
+As of this writing, **Streamlit Community Cloud (`*.streamlit.app`) does not
+sign Business Associate Agreements**. Do not host this app there with real
+PHI. Acceptable hosting options:
+
+- **Self-hosted Streamlit** on a VM (AWS EC2, Azure VM, GCP Compute Engine,
+  on-prem) under a BAA with the cloud provider, behind your own TLS-terminating
+  reverse proxy and SSO/VPN.
+- **Snowflake Streamlit** if your Snowflake account is on a HIPAA-eligible
+  edition and a BAA is in place.
+- **Containerized deployment** (Cloud Run, App Service, ECS, GKE) where the
+  underlying service is BAA-eligible and configured per the provider's HIPAA
+  guidance.
+
 ### Code-level controls (in this repo)
 
 - All processing is **in-memory only**. The uploaded CSV and generated PDFs are
   never written to disk by the app. There are no temp files.
 - **No third-party requests** — no analytics, no external CDNs, no fonts loaded
-  from the internet. The CSP forbids any cross-origin asset.
-- **`Cache-Control: no-store`** on every response so PHI is not cached by
-  browsers or intermediaries.
-- **Secure headers**: HSTS, X-Content-Type-Options, X-Frame-Options,
-  Referrer-Policy, strict CSP.
-- **Optional HTTP Basic auth** via `APP_PASSWORD` (and optional `APP_USER`).
-  Set it before running in any shared environment.
-- **No PHI in logs**. Werkzeug access logs are silenced; errors never echo
-  CSV contents back.
+  from the internet.
+- **Optional password gate** via `APP_PASSWORD` env var (or Streamlit secret).
 - **Generic download filenames** — the uploaded filename (which can itself be
   PHI) is never reflected back in the response.
-- Werkzeug debugger is hard-disabled.
+- **Errors never echo CSV contents back.**
 
 ### Operational controls (your responsibility to configure)
 
@@ -51,29 +67,37 @@ These must be true in production to claim HIPAA compliance:
 
 1. **Sign a BAA** with your hosting provider and any other vendor that touches
    the traffic (load balancer, WAF, log aggregator, backup service).
-2. **TLS everywhere.** Terminate HTTPS in front of the app (reverse proxy, load
-   balancer, or `gunicorn` behind nginx with a valid certificate). HSTS is set
-   on responses but only takes effect over HTTPS.
-3. **Authentication.** Set a strong `APP_PASSWORD` env var, or place the app
-   behind your existing SSO/VPN. Do not run it open to the internet.
+2. **TLS everywhere.** Terminate HTTPS in front of Streamlit (reverse proxy,
+   load balancer). Streamlit itself does not terminate TLS.
+3. **Authentication.** Set a strong `APP_PASSWORD`, or front the app with SSO
+   / your existing identity provider. Do not run open to the internet.
 4. **Restrict access** to the host (security groups, VPN, IP allow-list) and
-   to the file system (least-privilege OS user).
-5. **Disable infrastructure logging of request bodies.** Confirm your reverse
-   proxy / load balancer is not capturing POST payloads.
-6. **Encrypt at rest.** The app does not write PHI to disk, but the host's
-   disk should still be encrypted (filesystem-level or cloud volume).
-7. **Audit logging.** Log authentication events (successful + failed) at the
-   reverse proxy or auth layer. Retain per your policy.
-8. **Patch management.** Keep `Flask`, `pypdf`, and the OS base image current.
-9. **Workforce training & policies** — sanctions for misuse, breach
-   notification process, designated Privacy/Security Officer.
-10. **Run a production WSGI server** (e.g. `gunicorn`, `waitress`); the Flask
-    dev server is not for production use.
+   the file system (least-privilege OS user).
+5. **Disable usage telemetry.** Set `browser.gatherUsageStats = false` and
+   `global.disableWatchdogWarning = true` in `.streamlit/config.toml` to keep
+   the app from phoning home.
+6. **Disable infrastructure logging of request bodies / file uploads.**
+7. **Encrypt at rest.** The app does not write PHI to disk, but the host's
+   disk should still be encrypted.
+8. **Audit logging** at the reverse proxy / auth layer (login events, retain
+   per policy). Streamlit itself does not emit auth-event logs.
+9. **Patch management.** Keep `streamlit`, `pypdf`, and the OS base image
+   current.
+10. **Workforce training & policies** — sanctions for misuse, breach
+    notification process, designated Privacy/Security Officer.
 
-Example production command (gunicorn behind a TLS-terminating proxy):
+### Recommended `.streamlit/config.toml` for PHI hosting
 
-    APP_PASSWORD='<strong-random-secret>' \
-    gunicorn --bind 127.0.0.1:8000 --workers 2 app:app
+    [server]
+    headless = true
+    enableCORS = false
+    enableXsrfProtection = true
+
+    [browser]
+    gatherUsageStats = false
+
+    [global]
+    disableWatchdogWarning = true
 
 ### What this app does NOT do
 
@@ -88,7 +112,6 @@ turnkey HIPAA solution.
 
 ## Files
 
-- `app.py` — Flask app
-- `invoice_generator.py` — CSV parsing, grouping, PDF fill (no Flask deps)
+- `app.py` — Streamlit UI
+- `invoice_generator.py` — CSV parsing, grouping, PDF fill (no UI deps)
 - `template.pdf` — IRIS Provider Invoice fillable PDF (pre-filled with provider info)
-- `templates/index.html` — upload page
